@@ -1,18 +1,12 @@
 import React from "react";
 
-import {
-  View,
-  Text,
-  StyleSheet,
-  ViewStyle,
-  StyleProp,
-  Pressable,
-} from "react-native";
+import { View, Text, StyleSheet, Pressable } from "react-native";
+
+import type { ViewStyle, StyleProp } from "react-native";
 
 import Svg, { Circle, Path } from "react-native-svg";
 
 import DrawingStroke from "../../components/DrawingStroke";
-
 import { useTracingProgress } from "../hooks/useTracingProgress";
 
 import type { TracingGuide } from "../types/tracing.types";
@@ -40,10 +34,10 @@ export const TracingCanvas: React.FC<TracingCanvasProps> = ({
 }) => {
   const {
     panResponder,
-    strokes,
     currentStroke,
     progress,
     isCompleted,
+    completedSegments,
     resetTracing,
   } = useTracingProgress(guide, {
     onComplete,
@@ -88,53 +82,61 @@ export const TracingCanvas: React.FC<TracingCanvasProps> = ({
         {...panResponder.panHandlers}
       >
         <Svg width="100%" height="100%" style={StyleSheet.absoluteFill}>
-          {/* 전체 가이드 경로 */}
+          {/* 1. 원래 안내선 */}
           <Path
             d={guidePath}
             fill="none"
             stroke={guideColor}
-            strokeWidth={5}
+            strokeWidth={4}
             strokeDasharray="0.1 9"
             strokeLinecap="round"
           />
 
-          {/* 시작점 */}
-          {firstPoint && (
-            <Circle
-              cx={firstPoint.x}
-              cy={firstPoint.y}
-              r={strokeWidth}
-              fill="#FFD166"
-            />
-          )}
+          {/* 2. 완성된 구간 */}
+          {completedSegments.map((completed, index) => {
+            if (!completed) return null;
 
-          {/* 도착점 */}
-          {lastPoint && (
-            <Circle
-              cx={lastPoint.x}
-              cy={lastPoint.y}
-              r={strokeWidth}
-              fill="#8BD5A7"
-            />
-          )}
+            const start = guidePoints[index];
+            const end = guidePoints[index + 1];
 
-          {/* 완성된 선 */}
-          {strokes.map((stroke, index) => (
-            <DrawingStroke
-              key={`completed-${index}`}
-              points={stroke}
-              color={strokeColor}
-              strokeWidth={strokeWidth}
-            />
-          ))}
+            if (!start || !end) return null;
 
-          {/* 현재 그리는 선 */}
+            return (
+              <Path
+                key={`completed-${index}`}
+                d={`M ${start.x} ${start.y} L ${end.x} ${end.y}`}
+                fill="none"
+                stroke={strokeColor}
+                strokeWidth={strokeWidth}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            );
+          })}
+
+          {/* 3. 현재 손가락을 따라가는 임시 선 */}
           {currentStroke.length > 0 && (
             <DrawingStroke
               points={currentStroke}
               color={strokeColor}
               strokeWidth={strokeWidth}
+              opacity={0.65}
             />
+          )}
+
+          {/* 4. 시작점 */}
+          {firstPoint && (
+            <Circle
+              cx={firstPoint.x}
+              cy={firstPoint.y}
+              r={7}
+              fill={strokeColor}
+            />
+          )}
+
+          {/* 5. 도착점 */}
+          {lastPoint && (
+            <Circle cx={lastPoint.x} cy={lastPoint.y} r={7} fill="#F7C978" />
           )}
         </Svg>
       </View>
