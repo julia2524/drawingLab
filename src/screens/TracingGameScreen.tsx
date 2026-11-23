@@ -1,14 +1,23 @@
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useState } from "react";
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
-  LayoutChangeEvent,
+  ScrollView,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import type { TracingGuide } from "../drawing/tracing/types/tracing.types";
+import type {
+  TracingBoardSize,
+  TracingLineType,
+  TracingLineVariant,
+} from "../drawing/tracing/types/tracing.types";
+import { createTracingGuide } from "../drawing/tracing/paths/createTracingGuide";
+import {
+  TRACING_LINES,
+  getLineInfo,
+} from "../drawing/tracing/paths/lineCatalog";
 import { TracingCanvas } from "../drawing/tracing/components/TracingCanvas";
 import { Ionicons } from "@expo/vector-icons";
 
@@ -17,61 +26,28 @@ interface TracingGameScreenProps {
 }
 
 export default function TracingGameScreen({ onBack }: TracingGameScreenProps) {
-  const [boardSize, setBoardSize] = useState({
-    width: 0,
-    height: 0,
-  });
-
   const [resetKey, setResetKey] = useState(0);
+
+  // 현재 선택한 선 유형과 세부 변형
+  const [lineType, setLineType] = useState<TracingLineType>("horizontal");
+  const [variant, setVariant] = useState<TracingLineVariant>(0);
+
+  const lineInfo = getLineInfo(lineType);
+
+  const handleSelectLine = (type: TracingLineType) => {
+    setLineType(type);
+    setVariant(0);
+  };
 
   const handleReset = () => {
     setResetKey((prev) => prev + 1);
   };
-  const handleBoardLayout = (event: LayoutChangeEvent) => {
-    const { width, height } = event.nativeEvent.layout;
-
-    setBoardSize((previous) => {
-      if (previous.width === width && previous.height === height) {
-        return previous;
-      }
-
-      return { width, height };
-    });
-  };
-
-  // 현재 첫 번째 콘텐츠: 가로 직선
-  // 실제 보드 크기에 맞춰 좌표를 계산한다.
-
-  const guide = useMemo<TracingGuide | null>(() => {
-    const { width, height } = boardSize;
-
-    if (width <= 0 || height <= 0) {
-      return null;
-    }
-
-    const startX = width * 0.16;
-    const endX = width * 0.84;
-    const lineY = height * 0.52;
-
-    // 가로선을 60개의 작은 선분으로 분할
-    const segmentCount = 60;
-
-    const points = Array.from({ length: segmentCount + 1 }, (_, index) => {
-      const progress = index / segmentCount;
-
-      return {
-        x: startX + (endX - startX) * progress,
-        y: lineY,
-      };
-    });
-
-    return {
-      id: "horizontal-line",
-      points,
-      tolerance: Math.min(width * 0.04, 14),
-      completionThreshold: 1,
-    };
-  }, [boardSize]);
+  // 캔버스가 잰 실제 그림 영역 크기로 경로를 만든다.
+  // 화면 표시와 터치 판정이 같은 guide.points를 사용한다.
+  const createGuide = useCallback(
+    (size: TracingBoardSize) => createTracingGuide(lineType, variant, size),
+    [lineType, variant],
+  );
 
   return (
     <SafeAreaView style={styles.safeArea} edges={["top", "bottom"]}>
@@ -98,32 +74,89 @@ export default function TracingGameScreen({ onBack }: TracingGameScreenProps) {
 
         {/* 미션 안내 */}
         <View style={styles.missionArea}>
-          <Text style={styles.missionText}>팬더 친구를 만나러 가자!</Text>
+          <Text style={styles.missionText}>{lineInfo.mission}</Text>
 
-          <Text style={styles.missionSubText}>
-            점선을 따라 손가락으로 그려봐
-          </Text>
+          <Text style={styles.missionSubText}>{lineInfo.hint}</Text>
 
-          <TouchableOpacity
-            style={styles.retryButton}
-            activeOpacity={0.7}
-            onPress={handleReset}
+          <View style={styles.actionRow}>
+            <TouchableOpacity
+              style={styles.retryButton}
+              activeOpacity={0.7}
+              onPress={handleReset}
+            >
+              <Ionicons name="refresh" size={17} color="#71869A" />
+              <Text style={styles.retryText}>다시 하기</Text>
+            </TouchableOpacity>
+
+            {/* 세부 변형이 있는 유형만 표시 */}
+            {lineInfo.variants?.map((label, index) => {
+              const isSelected = variant === index;
+
+              return (
+                <TouchableOpacity
+                  key={label}
+                  style={[
+                    styles.variantChip,
+                    isSelected && styles.variantChipSelected,
+                  ]}
+                  activeOpacity={0.7}
+                  onPress={() => setVariant(index as TracingLineVariant)}
+                >
+                  <Text
+                    style={[
+                      styles.variantText,
+                      isSelected && styles.variantTextSelected,
+                    ]}
+                  >
+                    {label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </View>
+
+        {/* 선 유형 선택 (개발/테스트용) */}
+        <View style={styles.typeBar}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.typeBarContent}
           >
-            <Ionicons name="refresh" size={17} color="#71869A" />
-            <Text style={styles.retryText}>다시 하기</Text>
-          </TouchableOpacity>
+            {TRACING_LINES.map((line) => {
+              const isSelected = line.type === lineType;
+
+              return (
+                <TouchableOpacity
+                  key={line.type}
+                  style={[
+                    styles.typeChip,
+                    isSelected && styles.typeChipSelected,
+                  ]}
+                  activeOpacity={0.7}
+                  onPress={() => handleSelectLine(line.type)}
+                >
+                  <Text
+                    style={[
+                      styles.typeChipText,
+                      isSelected && styles.typeChipTextSelected,
+                    ]}
+                  >
+                    {line.no} {line.shortLabel}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
         </View>
 
         {/* 게임 보드 */}
-        <View style={styles.boardArea} onLayout={handleBoardLayout}>
-          {guide && (
-            <TracingCanvas
-              guide={guide}
-              width={boardSize.width}
-              height={boardSize.height}
-              resetKey={resetKey}
-            />
-          )}
+        <View style={styles.boardArea}>
+          <TracingCanvas
+            key={`${lineType}-${variant}`}
+            createGuide={createGuide}
+            resetKey={resetKey}
+          />
         </View>
       </View>
     </SafeAreaView>
@@ -204,8 +237,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 20,
-    paddingTop: 12,
-    paddingBottom: 20,
+    paddingTop: 4,
+    paddingBottom: 8,
   },
 
   missionText: {
@@ -238,12 +271,77 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     elevation: 3,
   },
+  actionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    marginTop: 10,
+  },
+
+  variantChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: "rgba(255,255,255,0.8)",
+    borderWidth: 1,
+    borderColor: "#DCEAF3",
+  },
+
+  variantChipSelected: {
+    backgroundColor: "#9B7AEA",
+    borderColor: "#9B7AEA",
+  },
+
+  variantText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#71869A",
+  },
+
+  variantTextSelected: {
+    color: "#FFFFFF",
+  },
+
+  typeBar: {
+    height: 44,
+  },
+
+  typeBarContent: {
+    paddingHorizontal: 16,
+    alignItems: "center",
+    gap: 8,
+  },
+
+  typeChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 18,
+    backgroundColor: "rgba(255,255,255,0.85)",
+    borderWidth: 1,
+    borderColor: "#DCEAF3",
+  },
+
+  typeChipSelected: {
+    backgroundColor: "#52677B",
+    borderColor: "#52677B",
+  },
+
+  typeChipText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#71869A",
+  },
+
+  typeChipTextSelected: {
+    color: "#FFFFFF",
+  },
+
   retryButton: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 6,
-    marginTop: 12,
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 20,

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Image, StyleSheet, View } from "react-native";
 import type { ImageSourcePropType } from "react-native";
 import Animated, {
@@ -13,6 +13,7 @@ import Animated, {
 import { Ionicons } from "@expo/vector-icons";
 
 import type { DrawingPoint } from "../../types/drawing.types";
+import { getMascotPosition } from "../utils/mascotPlacement";
 
 /**
  * 완성 시 출발 팬더가 사라지고 목적지 팬더가 나타나는 전환 연출.
@@ -28,6 +29,8 @@ interface PandaTransitionProps {
   winkSource?: ImageSourcePropType | null;
   startPoint: DrawingPoint;
   endPoint: DrawingPoint;
+  /** 팬더가 경로를 가리지 않는 자리를 찾는 데 사용 */
+  guidePoints: DrawingPoint[];
   isTraceCompleted: boolean;
   width: number;
   height: number;
@@ -47,6 +50,7 @@ export default function PandaTransition({
   winkSource = null,
   startPoint,
   endPoint,
+  guidePoints,
   isTraceCompleted,
   width,
   height,
@@ -185,10 +189,29 @@ export default function PandaTransition({
     opacity: flagOpacity.value,
   }));
 
-  const clampLeft = (centerX: number) =>
-    Math.min(Math.max(centerX - pandaWidth / 2, 0), width - pandaWidth);
+  // 선 유형이 바뀌면 출발/도착 팬더 위치를 다시 계산
+  const { startPosition, endPosition } = useMemo(() => {
+    const common = {
+      guidePoints,
+      boardWidth: width,
+      boardHeight: height,
+      mascotWidth: pandaWidth,
+      mascotHeight: pandaHeight,
+    };
 
-  const pandaTop = (pathY: number) => pathY - pandaHeight + 8;
+    return {
+      startPosition: getMascotPosition({ ...common, anchor: startPoint }),
+      endPosition: getMascotPosition({ ...common, anchor: endPoint }),
+    };
+  }, [
+    guidePoints,
+    startPoint,
+    endPoint,
+    width,
+    height,
+    pandaWidth,
+    pandaHeight,
+  ]);
 
   return (
     <View pointerEvents="none" style={[styles.container, { width, height }]}>
@@ -196,7 +219,7 @@ export default function PandaTransition({
       <Animated.View
         style={[
           styles.flag,
-          { left: endPoint.x - 11, top: endPoint.y - 34 },
+          { left: endPoint.x - 5, top: endPoint.y - 24 },
           flagStyle,
         ]}
       >
@@ -210,8 +233,8 @@ export default function PandaTransition({
           {
             width: pandaWidth,
             height: pandaHeight,
-            left: clampLeft(startPoint.x),
-            top: pandaTop(startPoint.y),
+            left: startPosition.left,
+            top: startPosition.top,
           },
           startStyle,
         ]}
@@ -226,8 +249,8 @@ export default function PandaTransition({
           {
             width: pandaWidth,
             height: pandaHeight,
-            left: clampLeft(endPoint.x),
-            top: pandaTop(endPoint.y),
+            left: endPosition.left,
+            top: endPosition.top,
           },
           endStyle,
         ]}
