@@ -8,19 +8,18 @@ import React, {
 
 import { View, Text, StyleSheet, Pressable } from "react-native";
 import type { LayoutChangeEvent } from "react-native";
-
 import type { ViewStyle, StyleProp } from "react-native";
 
 import Svg, { Circle, Path } from "react-native-svg";
 
 import DrawingStroke from "../../components/DrawingStroke";
-
 import { useTracingProgress } from "../hooks/useTracingProgress";
-
 import type { TracingBoardSize, TracingGuide } from "../types/tracing.types";
 
 import PandaTransition from "./PandaTransition";
 import DrawingParticleEffect from "./DrawingParticleEffect";
+import TracingTutorial from "./TracingTutorial";
+
 import type { DrawingParticleEffectHandle } from "./DrawingParticleEffect";
 
 import { PANDA_SOURCE, PANDA_WINK_SOURCE } from "../constants/pandaAssets";
@@ -34,12 +33,14 @@ interface TracingCanvasProps {
    * 경로와 터치 좌표가 같은 영역을 기준으로 하도록 캔버스가 크기를 직접 잰다.
    */
   createGuide: (size: TracingBoardSize) => TracingGuide;
+
   style?: StyleProp<ViewStyle>;
   guideColor?: string;
   strokeColor?: string;
   strokeWidth?: number;
   onComplete?: () => void;
   resetKey: number;
+
   // 팬더 표시 여부
   showPanda?: boolean;
 }
@@ -56,8 +57,16 @@ export const TracingCanvas: React.FC<TracingCanvasProps> = ({
 }) => {
   const particleRef = useRef<DrawingParticleEffectHandle>(null);
 
-  // 실제 그림 영역 크기 (onLayout으로 측정)
+  const tutorialTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // 실제 그림 영역 크기
   const [canvasSize, setCanvasSize] = useState<TracingBoardSize | null>(null);
+
+  // 튜토리얼 표시 상태
+  const [tutorialVisible, setTutorialVisible] = useState(false);
+
+  // 같은 캔버스에서 레이아웃이 변경되어도 튜토리얼 중복 실행 방지
+  const tutorialStartedRef = useRef(false);
 
   const guide = useMemo<TracingGuide>(
     () => (canvasSize ? createGuide(canvasSize) : EMPTY_GUIDE),
@@ -88,9 +97,11 @@ export const TracingCanvas: React.FC<TracingCanvasProps> = ({
     resetTracing,
   } = useTracingProgress(guide, {
     onComplete,
-    // 파티클은 시각 효과만 담당 (진행률/판정과 무관)
+
+    // 파티클은 시각 효과만 담당
     onTouchPoint: (point) => particleRef.current?.emit(point),
   });
+
   const guidePoints = guide.points;
 
   const guidePath = guidePoints
@@ -103,12 +114,11 @@ export const TracingCanvas: React.FC<TracingCanvasProps> = ({
   const firstPoint = guidePoints[0];
   const endPoint = guidePoints[guidePoints.length - 1];
 
-  // 팬더 크기: 기존(112x140)을 기준으로 작은 화면에서만 줄인다
+  // 팬더 크기
   const pandaWidth = Math.min(112, Math.round(width * 0.3));
   const pandaHeight = Math.round(pandaWidth * 1.25);
 
-  // 완성된 구간은 이어진 구간끼리 하나의 Path로 합쳐서 그린다
-  // (구간 수가 많은 곡선에서도 렌더링 부담을 줄이기 위함)
+  // 완성된 구간은 이어진 구간끼리 하나의 Path로 합친다
   const completedPath = useMemo(() => {
     let d = "";
     let isOpen = false;
@@ -132,7 +142,61 @@ export const TracingCanvas: React.FC<TracingCanvasProps> = ({
     return d;
   }, [completedSegments, guidePoints]);
 
-  // 진행 상황 + 파티클 + 팬더 상태를 함께 초기화
+  // ==================================================
+  // 튜토리얼 시작
+  // ==================================================
+
+  useEffect(() => {
+    if (!tutorialStartedRef.current && guidePoints.length >= 2) {
+      tutorialStartedRef.current = true;
+      setTutorialVisible(true);
+    }
+  }, [guidePoints]);
+
+  // 튜토리얼 완료
+  const handleTutorialComplete = useCallback(() => {
+    setTutorialVisible(false);
+  }, []);
+
+  // ==================================================
+  // 터치 이벤트에 따른 튜토리얼 제어
+  // ==================================================
+
+  // 타이머 초기화
+  const clearTutorialTimer = useCallback(() => {
+    if (tutorialTimerRef.current) {
+      clearTimeout(tutorialTimerRef.current);
+      tutorialTimerRef.current = null;
+    }
+  }, []);
+
+  // 아이가 터치하면 튜토리얼 즉시 중단
+  const handleTouchStart = useCallback(() => {
+    clearTutorialTimer();
+    setTutorialVisible(false);
+  }, [clearTutorialTimer]);
+
+  // 손가락을 뗀 후 3초 동안 재터치가 없으면 튜토리얼 재생
+  const handleTouchEnd = useCallback(() => {
+    clearTutorialTimer();
+
+    tutorialTimerRef.current = setTimeout(() => {
+      setTutorialVisible(true);
+      tutorialTimerRef.current = null;
+    }, 3000);
+  }, [clearTutorialTimer]);
+
+  // 컴포넌트가 사라질 때 타이머 정리
+  useEffect(() => {
+    return () => {
+      clearTutorialTimer();
+    };
+  }, [clearTutorialTimer]);
+
+  // ==================================================
+  // 초기화
+  // ==================================================
+
   const handleReset = useCallback(() => {
     particleRef.current?.clear();
     resetTracing();
@@ -149,7 +213,11 @@ export const TracingCanvas: React.FC<TracingCanvasProps> = ({
       {/* 진행률 */}
       <View style={styles.progressContainer}>
         <Text style={styles.progressLabel}>
-          {isCompleted ? "참 잘했어요! 🎉" : "길을 따라가 볼까요?"}
+          {isCompleted
+            ? "참 잘했어요! 🎉"
+            : tutorialVisible
+              ? "이렇게 그려봐요!"
+              : "길을 따라가 볼까요?"}
         </Text>
 
         <View style={styles.progressTrack}>
@@ -170,6 +238,9 @@ export const TracingCanvas: React.FC<TracingCanvasProps> = ({
       <View
         style={styles.canvas}
         onLayout={handleCanvasLayout}
+        onTouchStart={handleTouchStart}
+        onTouchEnd={handleTouchEnd}
+        onTouchCancel={handleTouchEnd}
         {...panResponder.panHandlers}
       >
         {canvasSize && firstPoint && endPoint && (
@@ -208,20 +279,18 @@ export const TracingCanvas: React.FC<TracingCanvasProps> = ({
               )}
 
               {/* 4. 시작점 */}
-              {firstPoint && (
-                <Circle
-                  cx={firstPoint.x}
-                  cy={firstPoint.y}
-                  r={7}
-                  fill={strokeColor}
-                />
-              )}
+              <Circle
+                cx={firstPoint.x}
+                cy={firstPoint.y}
+                r={7}
+                fill={strokeColor}
+              />
 
               {/* 5. 도착점 */}
-              {endPoint && (
-                <Circle cx={endPoint.x} cy={endPoint.y} r={7} fill="#F7C978" />
-              )}
+              <Circle cx={endPoint.x} cy={endPoint.y} r={7} fill="#F7C978" />
             </Svg>
+
+            {/* 팬더 */}
             {showPanda && (
               <PandaTransition
                 source={PANDA_SOURCE}
@@ -237,10 +306,18 @@ export const TracingCanvas: React.FC<TracingCanvasProps> = ({
               />
             )}
 
+            {/* 파티클 */}
             <DrawingParticleEffect
               ref={particleRef}
               width={width}
               height={height}
+            />
+
+            {/* 튜토리얼 */}
+            <TracingTutorial
+              visible={tutorialVisible}
+              points={guidePoints}
+              onComplete={handleTutorialComplete}
             />
           </>
         )}
