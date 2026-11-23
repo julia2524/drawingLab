@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import type { DrawingStrokeData } from "../../types/drawing.types";
+import type {
+  DrawingPoint,
+  DrawingStrokeData,
+} from "../../types/drawing.types";
 
 import type { TracingGuide } from "../types/tracing.types";
 
@@ -19,6 +22,8 @@ import { useDrawingGesture } from "../../hooks/useDrawingGesture";
 interface UseTracingProgressOptions {
   onProgressChange?: (progress: number) => void;
   onComplete?: () => void;
+  /** 손가락 좌표 (시각 효과 전용, 진행률 계산과 무관) */
+  onTouchPoint?: (point: DrawingPoint) => void;
 }
 
 /**
@@ -89,6 +94,7 @@ export const useTracingProgress = (
   const { panResponder, strokes, currentStroke, isDrawing, clearStrokes } =
     useDrawingGesture({
       onStrokeComplete: handleStrokeComplete,
+      onTouchPoint: options.onTouchPoint,
     });
 
   /**

@@ -24,6 +24,10 @@ export const useDrawingGesture = (options: DrawingGestureOptions = {}) => {
 
   onStrokeCompleteRef.current = options.onStrokeComplete;
 
+  const onTouchPointRef = useRef(options.onTouchPoint);
+
+  onTouchPointRef.current = options.onTouchPoint;
+
   // 좌표 유효성 검사
   const createPoint = useCallback(
     (x: number, y: number): DrawingPoint | null => {
@@ -49,6 +53,8 @@ export const useDrawingGesture = (options: DrawingGestureOptions = {}) => {
 
       setCurrentStroke(initialStroke);
       setIsDrawing(true);
+
+      onTouchPointRef.current?.(point);
     },
     [createPoint],
   );
@@ -66,6 +72,8 @@ export const useDrawingGesture = (options: DrawingGestureOptions = {}) => {
 
       currentStrokeRef.current = nextStroke;
       setCurrentStroke(nextStroke);
+
+      onTouchPointRef.current?.(point);
     },
     [createPoint],
   );

@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useCallback, useEffect, useRef } from "react";
 
 import { View, Text, StyleSheet, Pressable } from "react-native";
 
@@ -7,9 +7,16 @@ import type { ViewStyle, StyleProp } from "react-native";
 import Svg, { Circle, Path } from "react-native-svg";
 
 import DrawingStroke from "../../components/DrawingStroke";
+
 import { useTracingProgress } from "../hooks/useTracingProgress";
 
 import type { TracingGuide } from "../types/tracing.types";
+
+import PandaTransition from "./PandaTransition";
+import DrawingParticleEffect from "./DrawingParticleEffect";
+import type { DrawingParticleEffectHandle } from "./DrawingParticleEffect";
+
+import { PANDA_SOURCE, PANDA_WINK_SOURCE } from "../constants/pandaAssets";
 
 interface TracingCanvasProps {
   guide: TracingGuide;
@@ -20,6 +27,7 @@ interface TracingCanvasProps {
   strokeColor?: string;
   strokeWidth?: number;
   onComplete?: () => void;
+  resetKey: number;
 }
 
 export const TracingCanvas: React.FC<TracingCanvasProps> = ({
@@ -31,18 +39,24 @@ export const TracingCanvas: React.FC<TracingCanvasProps> = ({
   strokeColor = "#9B7AEA",
   strokeWidth = 10,
   onComplete,
+  resetKey,
 }) => {
+  const particleRef = useRef<DrawingParticleEffectHandle>(null);
+
   const {
     panResponder,
     currentStroke,
+    strokes,
+    isDrawing,
     progress,
     isCompleted,
     completedSegments,
     resetTracing,
   } = useTracingProgress(guide, {
     onComplete,
+    // 파티클은 시각 효과만 담당 (진행률/판정과 무관)
+    onTouchPoint: (point) => particleRef.current?.emit(point),
   });
-
   const guidePoints = guide.points;
 
   const guidePath = guidePoints
@@ -51,8 +65,21 @@ export const TracingCanvas: React.FC<TracingCanvasProps> = ({
     })
     .join(" ");
 
+  // 시작점과 도착점
   const firstPoint = guidePoints[0];
-  const lastPoint = guidePoints[guidePoints.length - 1];
+  const endPoint = guidePoints[guidePoints.length - 1];
+
+  // 진행 상황 + 파티클 + 팬더 상태를 함께 초기화
+  const handleReset = useCallback(() => {
+    particleRef.current?.clear();
+    resetTracing();
+  }, [resetTracing]);
+
+  useEffect(() => {
+    if (resetKey > 0) {
+      handleReset();
+    }
+  }, [resetKey, handleReset]);
 
   return (
     <View style={[styles.container, style]}>
@@ -135,14 +162,31 @@ export const TracingCanvas: React.FC<TracingCanvasProps> = ({
           )}
 
           {/* 5. 도착점 */}
-          {lastPoint && (
-            <Circle cx={lastPoint.x} cy={lastPoint.y} r={7} fill="#F7C978" />
+          {endPoint && (
+            <Circle cx={endPoint.x} cy={endPoint.y} r={7} fill="#F7C978" />
           )}
         </Svg>
+        <PandaTransition
+          source={PANDA_SOURCE}
+          winkSource={PANDA_WINK_SOURCE}
+          startPoint={firstPoint}
+          endPoint={endPoint}
+          isTraceCompleted={isCompleted}
+          width={width}
+          height={height}
+          pandaWidth={112}
+          pandaHeight={140}
+        />
+
+        <DrawingParticleEffect
+          ref={particleRef}
+          width={width}
+          height={height}
+        />
       </View>
 
       {/* 다시 그리기 */}
-      <Pressable style={styles.resetButton} onPress={resetTracing}>
+      <Pressable style={styles.resetButton} onPress={handleReset}>
         <Text style={styles.resetButtonText}>다시 그리기 ↻</Text>
       </Pressable>
     </View>
