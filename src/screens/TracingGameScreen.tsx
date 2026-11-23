@@ -11,7 +11,6 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import type {
   TracingBoardSize,
   TracingLineType,
-  TracingLineVariant,
 } from "../drawing/tracing/types/tracing.types";
 import { createTracingGuide } from "../drawing/tracing/paths/createTracingGuide";
 import {
@@ -28,15 +27,13 @@ interface TracingGameScreenProps {
 export default function TracingGameScreen({ onBack }: TracingGameScreenProps) {
   const [resetKey, setResetKey] = useState(0);
 
-  // 현재 선택한 선 유형과 세부 변형
+  // 현재 선택한 스테이지(선 유형)
   const [lineType, setLineType] = useState<TracingLineType>("horizontal");
-  const [variant, setVariant] = useState<TracingLineVariant>(0);
 
   const lineInfo = getLineInfo(lineType);
 
   const handleSelectLine = (type: TracingLineType) => {
     setLineType(type);
-    setVariant(0);
   };
 
   const handleReset = () => {
@@ -45,8 +42,8 @@ export default function TracingGameScreen({ onBack }: TracingGameScreenProps) {
   // 캔버스가 잰 실제 그림 영역 크기로 경로를 만든다.
   // 화면 표시와 터치 판정이 같은 guide.points를 사용한다.
   const createGuide = useCallback(
-    (size: TracingBoardSize) => createTracingGuide(lineType, variant, size),
-    [lineType, variant],
+    (size: TracingBoardSize) => createTracingGuide(lineType, size),
+    [lineType],
   );
 
   return (
@@ -87,32 +84,6 @@ export default function TracingGameScreen({ onBack }: TracingGameScreenProps) {
               <Ionicons name="refresh" size={17} color="#71869A" />
               <Text style={styles.retryText}>다시 하기</Text>
             </TouchableOpacity>
-
-            {/* 세부 변형이 있는 유형만 표시 */}
-            {lineInfo.variants?.map((label, index) => {
-              const isSelected = variant === index;
-
-              return (
-                <TouchableOpacity
-                  key={label}
-                  style={[
-                    styles.variantChip,
-                    isSelected && styles.variantChipSelected,
-                  ]}
-                  activeOpacity={0.7}
-                  onPress={() => setVariant(index as TracingLineVariant)}
-                >
-                  <Text
-                    style={[
-                      styles.variantText,
-                      isSelected && styles.variantTextSelected,
-                    ]}
-                  >
-                    {label}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
           </View>
         </View>
 
@@ -153,7 +124,7 @@ export default function TracingGameScreen({ onBack }: TracingGameScreenProps) {
         {/* 게임 보드 */}
         <View style={styles.boardArea}>
           <TracingCanvas
-            key={`${lineType}-${variant}`}
+            key={lineType}
             createGuide={createGuide}
             resetKey={resetKey}
           />
@@ -277,30 +248,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 8,
     marginTop: 10,
-  },
-
-  variantChip: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 20,
-    backgroundColor: "rgba(255,255,255,0.8)",
-    borderWidth: 1,
-    borderColor: "#DCEAF3",
-  },
-
-  variantChipSelected: {
-    backgroundColor: "#9B7AEA",
-    borderColor: "#9B7AEA",
-  },
-
-  variantText: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: "#71869A",
-  },
-
-  variantTextSelected: {
-    color: "#FFFFFF",
   },
 
   typeBar: {

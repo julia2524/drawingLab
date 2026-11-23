@@ -58,43 +58,59 @@ export interface TracingProgress {
 }
 
 /**
- * 12가지 선 유형
+ * 20개 스테이지의 선 유형 (스테이지 하나 = 유형 하나)
+ *
+ *  1 horizontal              가로선
+ *  2 vertical                세로선
+ *  3 ascending               올라가는 사선
+ *  4 descending              내려가는 사선
+ *  5 vertical_curve_right    오른쪽으로 볼록한 세로 곡선
+ *  6 vertical_curve_left     왼쪽으로 볼록한 세로 곡선
+ *  7 horizontal_curve_up     위로 볼록한 가로 곡선
+ *  8 horizontal_curve_down   아래로 볼록한 가로 곡선
+ *  9 meander_horizontal      가로 구불구불선
+ * 10 meander_vertical        세로 구불구불선
+ * 11 wave_horizontal         가로 물결선
+ * 12 wave_vertical           세로 물결선
+ * 13 bounce_up               위로 솟는 깡충선 (둥근 ∩)
+ * 14 bounce_down             아래로 파이는 깡충선 (둥근 U)
+ * 15 zigzag_horizontal       가로 뾰족선
+ * 16 zigzag_vertical         세로 뾰족선
+ * 17 loop_down               위에서 아래로 가는 세로 뱅글선
+ * 18 loop_up                 아래에서 위로 가는 세로 뱅글선
+ * 19 spiral_in               바깥에서 안쪽으로 가는 달팽이 나선
+ * 20 spiral_out              안쪽에서 바깥쪽으로 가는 달팽이 나선
  */
 export type TracingLineType =
   | "horizontal"
   | "vertical"
   | "ascending"
   | "descending"
-  | "vertical_curve"
-  | "horizontal_curve"
-  | "meandering"
-  | "wave"
-  | "bounce"
-  | "zigzag"
-  | "loop"
-  | "spiral";
+  | "vertical_curve_right"
+  | "vertical_curve_left"
+  | "horizontal_curve_up"
+  | "horizontal_curve_down"
+  | "meander_horizontal"
+  | "meander_vertical"
+  | "wave_horizontal"
+  | "wave_vertical"
+  | "bounce_up"
+  | "bounce_down"
+  | "zigzag_horizontal"
+  | "zigzag_vertical"
+  | "loop_down"
+  | "loop_up"
+  | "spiral_in"
+  | "spiral_out";
 
 /**
- * 유형별 세부 변형 (0 = 기본, 1 = 반대)
- *
- * vertical_curve   0 오른쪽 볼록 / 1 왼쪽 볼록
- * horizontal_curve 0 위쪽 볼록   / 1 아래쪽 볼록
- * meandering       0 가로         / 1 세로
- * loop             0 위→아래     / 1 아래→위
- * spiral           0 바깥→안쪽   / 1 안쪽→바깥
- */
-export type TracingLineVariant = 0 | 1;
-
-/**
- * 선 유형 하나가 만들어 내는 경로 (렌더링과 판정이 같은 path를 사용)
+ * 스테이지 하나가 만들어 내는 경로 (렌더링과 판정이 같은 path를 사용)
  */
 export interface TracingPathConfig {
   type: TracingLineType;
-  variant: TracingLineVariant;
   start: DrawingPoint;
   end: DrawingPoint;
   path: DrawingPoint[];
-  direction: "forward" | "reverse";
 }
 
 /**

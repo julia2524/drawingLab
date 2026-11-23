@@ -1,9 +1,5 @@
 import type { DrawingPoint } from "../../types/drawing.types";
-import type {
-  TracingBoardSize,
-  TracingLineType,
-  TracingLineVariant,
-} from "../types/tracing.types";
+import type { TracingBoardSize, TracingLineType } from "../types/tracing.types";
 
 import { resamplePath } from "../utils/tracingPathUtils";
 import { getCurveTolerance } from "./tolerance";
@@ -13,14 +9,13 @@ import { getCurveTolerance } from "./tolerance";
  *
  * - 모두 보드 크기(width, height)에서 비율로 좌표를 계산한다.
  *   → 화면 크기가 달라져도 모양이 유지된다.
- * - 항상 "기본 방향"(forward)의 점 배열을 돌려준다.
- *   (loop / spiral의 반대 방향은 createTracingPath에서 뒤집는다)
+ * - 스테이지마다 독립된 생성기를 갖는다. 세로형은 가로형을 90° 돌린 것이 아니라
+ *   세로 화면에 맞게 따로 설계한다.
+ * - 대상은 만 1~2세: 크고, 넓고, 둥글게. 굴곡은 적게(약 2회), 간격은 넉넉하게.
+ * - 경로의 시작점이 곧 출발점, 마지막 점이 도착점이다.
  */
 
-type Generator = (
-  size: TracingBoardSize,
-  variant: TracingLineVariant,
-) => DrawingPoint[];
+type Generator = (size: TracingBoardSize) => DrawingPoint[];
 
 const TWO_PI = Math.PI * 2;
 
@@ -118,121 +113,186 @@ const smoothThrough = (
   return result;
 };
 
-// ─────────────────────────────── A. 기본 직선
+/** 곡선 유형에서 굴곡/크기가 허용 거리보다 충분히 크도록 하는 보정 */
+const atLeast = (
+  preferred: number,
+  tolerance: number,
+  tolerances: number,
+  max: number,
+) => Math.min(Math.max(preferred, tolerance * tolerances), max);
 
-// 01 가로선 (기존 구현과 동일한 좌표/분할)
+/** 직선 꼭짓점(뾰족한 모서리)을 반지름 radius로 부드럽게 둥글린다 */
+const roundCorners = (
+  vertices: DrawingPoint[],
+  radius: number,
+  steps = 10,
+): DrawingPoint[] => {
+  const out: DrawingPoint[] = [{ ...vertices[0] }];
+
+  for (let i = 1; i < vertices.length - 1; i++) {
+    const prev = vertices[i - 1];
+    const cur = vertices[i];
+    const next = vertices[i + 1];
+
+    const d1 = Math.hypot(prev.x - cur.x, prev.y - cur.y);
+    const d2 = Math.hypot(next.x - cur.x, next.y - cur.y);
+    const r = Math.min(radius, d1 * 0.45, d2 * 0.45);
+
+    const a = {
+      x: cur.x + ((prev.x - cur.x) / d1) * r,
+      y: cur.y + ((prev.y - cur.y) / d1) * r,
+    };
+    const b = {
+      x: cur.x + ((next.x - cur.x) / d2) * r,
+      y: cur.y + ((next.y - cur.y) / d2) * r,
+    };
+
+    out.push(a);
+
+    // 꼭짓점을 제어점으로 하는 2차 베지어
+    for (let s = 1; s < steps; s++) {
+      const t = s / steps;
+      const u = 1 - t;
+
+      out.push({
+        x: u * u * a.x + 2 * u * t * cur.x + t * t * b.x,
+        y: u * u * a.y + 2 * u * t * cur.y + t * t * b.y,
+      });
+    }
+
+    out.push(b);
+  }
+
+  out.push({ ...vertices[vertices.length - 1] });
+
+  return out;
+};
+
+// ─────────────────────────────── A. 기본 직선 (1~4)
+
+// 1 가로선: 왼쪽 → 오른쪽 (기존 구현과 동일한 좌표/분할)
 const horizontal: Generator = ({ width, height }) =>
   straight(
     { x: width * 0.16, y: height * 0.52 },
     { x: width * 0.84, y: height * 0.52 },
   );
 
-// 02 세로선: 위 → 아래
+// 2 세로선: 위 → 아래
 const vertical: Generator = ({ width, height }) =>
   straight(
     { x: width * 0.5, y: height * 0.16 },
     { x: width * 0.5, y: height * 0.84 },
   );
 
-// 03 올라가는 사선: 왼쪽 아래 → 오른쪽 위
+// 3 올라가는 사선: 왼쪽 아래 → 오른쪽 위
 const ascending: Generator = ({ width, height }) =>
   straight(
     { x: width * 0.16, y: height * 0.78 },
     { x: width * 0.84, y: height * 0.26 },
   );
 
-// 04 내려가는 사선: 왼쪽 위 → 오른쪽 아래
+// 4 내려가는 사선: 왼쪽 위 → 오른쪽 아래
 const descending: Generator = ({ width, height }) =>
   straight(
     { x: width * 0.16, y: height * 0.26 },
     { x: width * 0.84, y: height * 0.78 },
   );
 
-// ─────────────────────────────── B. 기본 곡선
+// ─────────────────────────────── B. 기본 곡선 (5~8)
 
-// 05 세로 곡선: 위 → 아래로 가며 한 번 부드럽게 좌우로 휜다
-const verticalCurve: Generator = ({ width, height }, variant) => {
-  const sign = variant === 0 ? 1 : -1;
-  const amplitude = width * 0.22;
-  const y0 = height * 0.16;
-  const y1 = height * 0.84;
-  const steps = 160;
+// 세로 곡선: 위 → 아래로 가며 한 번 크게 휜다 (sign +1 = 오른쪽 볼록)
+const makeVerticalCurve =
+  (sign: 1 | -1): Generator =>
+  ({ width, height }) => {
+    const amplitude = width * 0.26;
+    const y0 = height * 0.14;
+    const y1 = height * 0.86;
+    const steps = 160;
 
-  return finalizeCurve(
-    Array.from({ length: steps + 1 }, (_, index) => {
-      const t = index / steps;
+    return finalizeCurve(
+      Array.from({ length: steps + 1 }, (_, index) => {
+        const t = index / steps;
 
-      return {
-        x: width * 0.5 + sign * amplitude * Math.sin(Math.PI * t),
-        y: y0 + (y1 - y0) * t,
-      };
-    }),
-  );
-};
-
-// 06 가로 곡선: 왼쪽 → 오른쪽으로 가며 한 번 부드럽게 위아래로 휜다
-const horizontalCurve: Generator = ({ width, height }, variant) => {
-  // variant 0 = 위쪽으로 볼록 (가운데가 위로 올라감)
-  const sign = variant === 0 ? -1 : 1;
-  const amplitude = height * 0.18;
-  const x0 = width * 0.16;
-  const x1 = width * 0.84;
-  const steps = 160;
-
-  return finalizeCurve(
-    Array.from({ length: steps + 1 }, (_, index) => {
-      const t = index / steps;
-
-      return {
-        x: x0 + (x1 - x0) * t,
-        y: height * 0.52 + sign * amplitude * Math.sin(Math.PI * t),
-      };
-    }),
-  );
-};
-
-// ─────────────────────────────── C. 반복적인 방향 전환
-
-// 07 구불구불선: 굴곡의 크기와 간격이 제각각인 부드러운 곡선 (모서리 없음)
-const MEANDER_U = [0, 0.16, 0.38, 0.52, 0.76, 0.88, 1];
-const MEANDER_V = [0, -0.8, 0.55, -0.45, 0.85, -0.5, 0.1];
-
-const meandering: Generator = ({ width, height }, variant) => {
-  const isVertical = variant === 1;
-
-  // 그림 영역이 낮아도 굴곡이 허용 거리보다 충분히 크도록 보정
-  const amplitude = Math.min(
-    Math.max(height * 0.13, getCurveTolerance(width) * 3),
-    height * 0.2,
-  );
-
-  const controls = MEANDER_U.map((u, index) => {
-    const v = MEANDER_V[index];
-
-    return isVertical
-      ? {
-          x: width * 0.5 + v * width * 0.2,
-          y: height * 0.14 + u * height * 0.72,
-        }
-      : {
-          x: width * 0.16 + u * width * 0.68,
-          y: height * 0.52 + v * amplitude,
+        return {
+          x: width * 0.5 + sign * amplitude * Math.sin(Math.PI * t),
+          y: y0 + (y1 - y0) * t,
         };
-  });
+      }),
+    );
+  };
+
+// 가로 곡선: 왼쪽 → 오른쪽으로 가며 한 번 크게 휜다 (sign -1 = 위로 볼록)
+const makeHorizontalCurve =
+  (sign: 1 | -1): Generator =>
+  ({ width, height }) => {
+    const amplitude = height * 0.22;
+    const x0 = width * 0.12;
+    const x1 = width * 0.88;
+    const steps = 160;
+
+    return finalizeCurve(
+      Array.from({ length: steps + 1 }, (_, index) => {
+        const t = index / steps;
+
+        return {
+          x: x0 + (x1 - x0) * t,
+          y: height * 0.52 + sign * amplitude * Math.sin(Math.PI * t),
+        };
+      }),
+    );
+  };
+
+// ─────────────────────────────── C. 반복적인 방향 전환 (9~16)
+
+// 9 가로 구불구불선: 크기와 간격이 서로 다른 굴곡 2회 (위로 크게 한 번, 아래로 한 번)
+const meanderHorizontal: Generator = ({ width, height }) => {
+  const u = [0, 0.26, 0.62, 1];
+  const v = [0, -0.85, 0.6, 0.05];
+  const amplitude = atLeast(
+    height * 0.2,
+    getCurveTolerance(width),
+    3,
+    height * 0.24,
+  );
+
+  const controls = u.map((value, index) => ({
+    x: width * 0.12 + value * width * 0.76,
+    y: height * 0.52 + v[index] * amplitude,
+  }));
 
   return finalizeCurve(smoothThrough(controls));
 };
 
-// 08 물결선: 크기와 간격이 일정한 사인 파형
-const wave: Generator = ({ width, height }) => {
-  const cycles = 3;
-  // 그림 영역이 낮아도 파도 높이가 허용 거리보다 충분히 크도록 보정
-  const amplitude = Math.min(
-    Math.max(height * 0.1, getCurveTolerance(width) * 2.8),
-    height * 0.2,
+// 10 세로 구불구불선: 세로 화면에 맞춰 따로 설계 (오른쪽으로 크게, 왼쪽으로 한 번)
+const meanderVertical: Generator = ({ width, height }) => {
+  const u = [0, 0.3, 0.66, 1];
+  const v = [0, 0.8, -0.7, -0.05];
+  const amplitude = atLeast(
+    width * 0.17,
+    getCurveTolerance(width),
+    3,
+    width * 0.22,
   );
-  const x0 = width * 0.16;
-  const x1 = width * 0.84;
+
+  const controls = u.map((value, index) => ({
+    x: width * 0.5 + v[index] * amplitude,
+    y: height * 0.14 + value * height * 0.72,
+  }));
+
+  return finalizeCurve(smoothThrough(controls));
+};
+
+// 11 가로 물결선: 크기와 간격이 일정한 사인 파형 2주기 (왼쪽 → 오른쪽)
+const waveHorizontal: Generator = ({ width, height }) => {
+  const cycles = 2;
+  const amplitude = atLeast(
+    height * 0.12,
+    getCurveTolerance(width),
+    2.6,
+    height * 0.18,
+  );
+  const x0 = width * 0.12;
+  const x1 = width * 0.88;
   const steps = 300;
 
   return finalizeCurve(
@@ -247,81 +307,122 @@ const wave: Generator = ({ width, height }) => {
   );
 };
 
-// 09 깡충선: 바닥 구간 사이에 독립된 둥근 언덕(반타원)이 반복
-const bounce: Generator = ({ width, height }) => {
-  const hills = 3;
-  const x0 = width * 0.16;
-  const x1 = width * 0.84;
-  const baseY = height * 0.62;
-  const hillHeight = Math.min(height * 0.2, (x1 - x0) / hills / 1.2);
+// 12 세로 물결선: 세로 화면에 맞춰 따로 설계 (위 → 아래, 2주기)
+const waveVertical: Generator = ({ width, height }) => {
+  const cycles = 2;
+  const amplitude = atLeast(
+    width * 0.14,
+    getCurveTolerance(width),
+    2.6,
+    width * 0.2,
+  );
+  const y0 = height * 0.12;
+  const y1 = height * 0.88;
+  const steps = 300;
 
-  const slot = (x1 - x0) / hills;
-  const gap = slot * 0.2; // 언덕 사이의 낮은 구간
-  const hillWidth = slot - gap;
+  return finalizeCurve(
+    Array.from({ length: steps + 1 }, (_, index) => {
+      const t = index / steps;
 
-  const dense: DrawingPoint[] = [{ x: x0, y: baseY }];
-
-  for (let k = 0; k < hills; k++) {
-    // 각 언덕을 자기 슬롯의 가운데에 두고, 앞뒤에 낮은 구간(gap/2)을 남긴다
-    const left = x0 + k * slot + gap / 2;
-    const right = left + hillWidth;
-    const cx = (left + right) / 2;
-    const rx = (right - left) / 2;
-    const arcSteps = 60;
-
-    // 낮은 구간에서 언덕 시작점까지
-    dense.push({ x: left, y: baseY });
-
-    // θ: π → 0 (왼쪽 끝 → 정상 → 오른쪽 끝)
-    for (let s = 1; s <= arcSteps; s++) {
-      const theta = Math.PI * (1 - s / arcSteps);
-
-      dense.push({
-        x: cx + rx * Math.cos(theta),
-        y: baseY - hillHeight * Math.sin(theta),
-      });
-    }
-  }
-
-  dense.push({ x: x1, y: baseY });
-
-  return finalizeCurve(dense);
+      return {
+        x: width * 0.5 + amplitude * Math.sin(TWO_PI * cycles * t),
+        y: y0 + (y1 - y0) * t,
+      };
+    }),
+  );
 };
 
-// 10 뾰족선: 직선 구간과 날카로운 꼭짓점의 지그재그
-const zigzag: Generator = ({ width, height }) => {
-  const legs = 6;
-  const x0 = width * 0.16;
-  const x1 = width * 0.84;
-  const lowY = height * 0.62;
-  const highY = height * 0.42;
+// 깡충선: 커다란 반원 2개가 이어진다 (direction -1 = 위로 솟는 ∩, +1 = 아래로 파이는 U)
+const makeBounce =
+  (direction: -1 | 1): Generator =>
+  ({ width, height }) => {
+    const arcs = 2;
+    const x0 = width * 0.1;
+    const x1 = width * 0.9;
+    const slot = (x1 - x0) / arcs;
+    const radius = slot / 2;
+    const archHeight = Math.min(radius, height * 0.3); // 가능하면 진짜 반원
+    const arcSteps = 60;
+
+    // 반원이 화면 가운데 오도록 기준선을 잡는다 (∩는 기준선 위로, U는 아래로)
+    const baseY = height * 0.5 - (direction * archHeight) / 2;
+
+    const dense: DrawingPoint[] = [{ x: x0, y: baseY }];
+
+    for (let k = 0; k < arcs; k++) {
+      const cx = x0 + slot * k + radius;
+
+      // θ: π → 0 (왼쪽 끝 → 정상 → 오른쪽 끝)
+      for (let s = 1; s <= arcSteps; s++) {
+        const theta = Math.PI * (1 - s / arcSteps);
+
+        dense.push({
+          x: cx + radius * Math.cos(theta),
+          y: baseY + direction * archHeight * Math.sin(theta),
+        });
+      }
+    }
+
+    return finalizeCurve(dense);
+  };
+
+// 15 가로 뾰족선: 봉우리 2개 (직선 구간 + 부드럽게 둥글린 꼭짓점)
+const zigzagHorizontal: Generator = ({ width, height }) => {
+  const legs = 4;
+  const x0 = width * 0.12;
+  const x1 = width * 0.88;
+  const lowY = height * 0.68;
+  const highY = height * 0.32;
 
   const vertices = Array.from({ length: legs + 1 }, (_, index) => ({
     x: x0 + ((x1 - x0) * index) / legs,
     y: index % 2 === 0 ? lowY : highY,
   }));
 
-  // 꼭짓점을 둥글게 만들지 않도록 직선으로만 이어서 재샘플링
-  return finalizeCurve(vertices);
+  const legLength = Math.hypot((x1 - x0) / legs, lowY - highY);
+
+  return finalizeCurve(roundCorners(vertices, Math.min(legLength * 0.3, 28)));
 };
 
-// ─────────────────────────────── D. 회전 및 나선
+// 16 세로 뾰족선: 세로 화면에 맞춰 따로 설계 (위 → 아래, 오른쪽으로 솟은 봉우리 2개)
+const zigzagVertical: Generator = ({ width, height }) => {
+  const legs = 4;
+  const y0 = height * 0.12;
+  const y1 = height * 0.88;
+  const legRise = (y1 - y0) / legs;
 
-// 11 뱅글 꼬불선: 위 → 아래로 이동하며 같은 크기의 고리가 반복 (prolate trochoid)
-const loop: Generator = ({ width, height }) => {
-  const travel = height * 0.62;
+  // 가로 폭이 세로 이동량보다 지나치게 넓어 눕지 않도록 제한
+  const swing = Math.min(width * 0.36, legRise * 1.3);
 
-  // 이웃한 고리가 허용 거리 안으로 붙지 않도록, 영역이 작으면 고리 수를 줄인다 (2~3개)
+  const vertices = Array.from({ length: legs + 1 }, (_, index) => ({
+    x: width * 0.5 + (index % 2 === 0 ? -swing / 2 : swing / 2),
+    y: y0 + legRise * index,
+  }));
+
+  const legLength = Math.hypot(swing, legRise);
+
+  return finalizeCurve(roundCorners(vertices, Math.min(legLength * 0.3, 26)));
+};
+
+// ─────────────────────────────── D. 회전 및 나선 (17~20)
+
+// 뱅글선: 위 → 아래로 이동하며 둥근 고리가 3번 반복 (prolate trochoid)
+// 고리가 2개뿐이면 "S자 + 갈고리"로 보여서 뱅글로 느껴지지 않는다.
+const loopDown: Generator = ({ width, height }) => {
+  const travel = height * 0.74;
+
+  // 고리 사이(한 바퀴 이동 거리)가 허용 거리의 4.6배 이상 되도록 고리 수를 정한다.
+  // 영역이 아주 작으면 2개로 줄여 이웃 고리가 판정 범위 안으로 붙는 것을 막는다.
   const loops = Math.max(
     2,
-    Math.min(3, Math.floor(travel / (getCurveTolerance(width) * 5))),
+    Math.min(3, Math.floor(travel / (getCurveTolerance(width) * 4.6))),
   );
 
   const a = travel / (TWO_PI * loops);
-  const b = Math.min(a * 2.4, width * 0.2);
+  const b = Math.min(a * 2.0, width * 0.2);
 
-  const top = height * 0.19;
-  const steps = loops * 90;
+  const top = height * 0.13;
+  const steps = loops * 120;
 
   return finalizeCurve(
     Array.from({ length: steps + 1 }, (_, index) => {
@@ -337,14 +438,14 @@ const loop: Generator = ({ width, height }) => {
   );
 };
 
-// 12 달팽이 뱅글선: 중심을 기준으로 반지름이 일정하게 줄어드는 나선 (바깥 → 안쪽, 시계 방향)
-const spiral: Generator = ({ width, height }) => {
-  const turns = 2.5;
-  const outer = Math.min(width, height) * 0.4;
-  const inner = outer * 0.1;
+// 달팽이 나선: 바깥 → 안쪽, 시계 방향, 2바퀴 (고리 사이를 넓게)
+const spiralIn: Generator = ({ width, height }) => {
+  const turns = 2;
+  const outer = Math.min(width, height) * 0.42;
+  const inner = outer * 0.12;
   const cx = width * 0.5;
   const cy = height * 0.5;
-  const steps = Math.ceil(turns * 120);
+  const steps = turns * 150;
 
   return finalizeCurve(
     Array.from({ length: steps + 1 }, (_, index) => {
@@ -360,17 +461,31 @@ const spiral: Generator = ({ width, height }) => {
   );
 };
 
+/** 같은 경로를 반대 방향으로 (17↔18, 19↔20은 같은 모양을 반대로 진행) */
+const reversed =
+  (generator: Generator): Generator =>
+  (size) =>
+    [...generator(size)].reverse();
+
 export const PATH_GENERATORS: Record<TracingLineType, Generator> = {
   horizontal,
   vertical,
   ascending,
   descending,
-  vertical_curve: verticalCurve,
-  horizontal_curve: horizontalCurve,
-  meandering,
-  wave,
-  bounce,
-  zigzag,
-  loop,
-  spiral,
+  vertical_curve_right: makeVerticalCurve(1),
+  vertical_curve_left: makeVerticalCurve(-1),
+  horizontal_curve_up: makeHorizontalCurve(-1),
+  horizontal_curve_down: makeHorizontalCurve(1),
+  meander_horizontal: meanderHorizontal,
+  meander_vertical: meanderVertical,
+  wave_horizontal: waveHorizontal,
+  wave_vertical: waveVertical,
+  bounce_up: makeBounce(-1),
+  bounce_down: makeBounce(1),
+  zigzag_horizontal: zigzagHorizontal,
+  zigzag_vertical: zigzagVertical,
+  loop_down: loopDown,
+  loop_up: reversed(loopDown),
+  spiral_in: spiralIn,
+  spiral_out: reversed(spiralIn),
 };
